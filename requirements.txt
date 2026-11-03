@@ -1,7 +1,6 @@
 streamlit
 sqlalchemy
 psycopg2-binary
-psycopg
 pandas
 langchain
 langchain-openai
