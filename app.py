@@ -22,16 +22,20 @@ st.set_page_config(
 # ==========================================
 # CONEXÃO COM O BANCO DE DADOS (PostgreSQL)
 # ==========================================
-# Insira sua URL do PostgreSQL ou use variável de ambiente
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://usuario:senha@localhost:5432/db_literario")
+# Puxa diretamente das Secrets do Streamlit ou usa variável de ambiente com fallback seguro
+DATABASE_URL = st.secrets.get("DATABASE_URL", os.getenv("DATABASE_URL", "postgresql://usuario:senha@localhost:5432/db_literario"))
+
+# Garante o driver psycopg2 para compatibilidade total no Streamlit Cloud
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
+elif DATABASE_URL.startswith("postgresql://") and "+psycopg2" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 @st.cache_resource
 def get_db_engine():
     return create_engine(DATABASE_URL)
 
 engine = get_db_engine()
-SessionLocal = sessionmaker(bind=engine)
-Base = declarative_base()
 
 # Modelos SQLAlchemy simplificados
 class LivroModel(Base):
