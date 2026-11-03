@@ -3,3 +3,4 @@ sqlalchemy
 pandas
 langchain
 langchain-openai
+psycopg2-binary
