@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 import pandas as pd
+import psycopg2
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -22,10 +23,8 @@ st.set_page_config(
 # ==========================================
 # CONEXÃO COM O BANCO DE DADOS (PostgreSQL)
 # ==========================================
-# Puxa diretamente das Secrets do Streamlit ou usa variável de ambiente com fallback seguro
-DATABASE_URL = st.secrets.get("DATABASE_URL", os.getenv("DATABASE_URL", "postgresql://usuario:senha@localhost:5432/db_literario"))
+DATABASE_URL = st.secrets.get("DATABASE_URL", os.getenv("DATABASE_URL", ""))
 
-# Garante o driver psycopg2 para compatibilidade total no Streamlit Cloud
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
 elif DATABASE_URL.startswith("postgresql://") and "+psycopg2" not in DATABASE_URL:
@@ -33,9 +32,14 @@ elif DATABASE_URL.startswith("postgresql://") and "+psycopg2" not in DATABASE_UR
 
 @st.cache_resource
 def get_db_engine():
-    return create_engine(DATABASE_URL)
+    return create_engine(
+        DATABASE_URL,
+        connect_args={"sslmode": "require"} if "sslmode" not in DATABASE_URL else {}
+    )
 
 engine = get_db_engine()
+SessionLocal = sessionmaker(bind=engine)
+Base = declarative_base()
 
 # Modelos SQLAlchemy simplificados
 class LivroModel(Base):
@@ -103,27 +107,30 @@ db = SessionLocal()
 
 with aba_dashboard:
     st.subheader("Métricas Gerais da Obra")
-    livro = db.query(LivroModel).filter(LivroModel.id == livro_id_input).first()
-    
-    if livro:
-        caps = db.query(CapituloModel).filter(CapituloModel.livro_id == livro_id_input).all()
-        total_palavras = sum(c.quantidade_palavras for c in caps if c.quantidade_palavras)
-        total_caps = len(caps)
-        concluidos = sum(1 for c in caps if c.status_escrita == 'Concluído')
+    try:
+        livro = db.query(LivroModel).filter(LivroModel.id == livro_id_input).first()
         
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Título do Livro", livro.titulo)
-        col2.metric("Total de Capítulos", f"{total_caps} ({concluidos} prontas)")
-        col3.metric("Total de Palavras", f"{total_palavras:,}")
-        col4.metric("Status do Projeto", livro.status)
-    else:
-        st.warning(f"Nenhum livro encontrado com o ID {livro_id_input}. Verifique o banco de dados.")
+        if livro:
+            caps = db.query(CapituloModel).filter(CapituloModel.livro_id == livro_id_input).all()
+            total_palavras = sum(c.quantidade_palavras for c in caps if c.quantidade_palavras)
+            total_caps = len(caps)
+            concluidos = sum(1 for c in caps if c.status_escrita == 'Concluído')
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Título do Livro", livro.titulo)
+            col2.metric("Total de Capítulos", f"{total_caps} ({concluidos} prontas)")
+            col3.metric("Total de Palavras", f"{total_palavras:,}")
+            col4.metric("Status do Projeto", livro.status)
+        else:
+            st.warning(f"Nenhum livro encontrado com o ID {livro_id_input}. Verifique o banco de dados.")
+    except Exception as e:
+        st.error(f"Erro ao carregar o dashboard: {e}")
 
 with aba_personagens:
     st.subheader("Elenco de Personagens")
     try:
         df_personagens = pd.read_sql(
-            f"SELECT nome_completo, idade, origem, objetivos FROM personagens WHERE livro_id = {livro_id_input}",
+            f"SELECT nome_completo, idade, personalidade, motivacoes FROM personagens WHERE livro_id = {livro_id_input}",
             engine
         )
         if not df_personagens.empty:
@@ -151,7 +158,6 @@ with aba_chat:
     st.subheader("💬 Chat com o Co-piloto Editorial (IA)")
     st.markdown("Converse com a IA sobre o enredo, inconsistências ou detalhes dos personagens.")
     
-    # Histórico de mensagens no chat do Streamlit
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -167,7 +173,6 @@ with aba_chat:
         with st.chat_message("assistant"):
             with st.spinner("Analisando o banco de dados e estruturando resposta..."):
                 try:
-                    # Configura LLM com ferramentas
                     llm = ChatOpenAI(model="gpt-4o", temperature=0.3)
                     llm_with_tools = llm.bind_tools(tools)
                     
@@ -179,7 +184,6 @@ with aba_chat:
                     messages = [system_msg, HumanMessage(content=prompt)]
                     response = llm_with_tools.invoke(messages)
                     
-                    # Executa tool call se a IA solicitar
                     if response.tool_calls:
                         for tool_call in response.tool_calls:
                             tool_args = tool_call["args"]
